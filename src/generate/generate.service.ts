@@ -357,33 +357,22 @@ export class GenerateService {
       
 
       // Build config with referenceImages if available
-      const config: GenerateVideosConfig = {};
-
-      if (firstFrameObj && time != '0-8seconds') {
-        requestPayload.image = {
-          imageBytes: firstFrameObj.imageBytes,
-          mimeType: firstFrameObj.mimeType,
-        };
-      }
-      const charRefs = findCharImagesForChunk( Array.isArray(chunk.characters) && chunk.characters.length > 0 ? chunk.characters : (opts.characters as any) );
-      Logger.debug(charRefs.length, 'Character reference images found for chunk');
-      if (charRefs.length > 0 && time == '0-8seconds') {
-        config.referenceImages = charRefs.map((r: any) => ({
-          image: {
-            imageBytes: r.imageBytes ?? r.bytesBase64Encoded,
-            mimeType: r.mimeType ?? 'image/png',
-          },
-          referenceType: VideoGenerationReferenceType.ASSET,
-        }));
-      }
-      Logger.debug(config.referenceImages?.length ?? 0, 'Total reference images for chunk');
-      if (config.referenceImages && config.referenceImages.length > 0) {
-        requestPayload.config = config;
-      }
-      this.logger.debug(
-        `Calling models.generateVideos for time=${time} (hasFirstFrame=${Boolean(firstFrameObj)}, referenceImages=${config.referenceImages?.length ?? 0})`,
+      // Per request: disable last-frame chaining; seed each clip from character images.
+      const charRefs = findCharImagesForChunk(
+        Array.isArray(chunk.characters) && chunk.characters.length > 0 ? chunk.characters : (opts.characters as any)
       );
-      this.logger.debug(requestPayload)
+      Logger.debug(charRefs.length, 'Character reference images found for chunk');
+      if (charRefs.length > 0) {
+        requestPayload.image = {
+          imageBytes: charRefs[0].imageBytes,
+          mimeType: charRefs[0].mimeType ?? 'image/png',
+        } as any;
+      }
+      // Do NOT send config.referenceImages (unsupported for preview; caused INVALID_ARGUMENT previously)
+      this.logger.debug(
+        `Calling models.generateVideos for time=${time} (seedImage=${Boolean(requestPayload.image)})`,
+      );
+      this.logger.debug({ model, promptSummary: prompt?.slice(0, 140) + '...', hasSeed: Boolean(requestPayload.image) })
       let operation = await this.client.models.generateVideos(requestPayload);
 
       // Poll until done
@@ -471,29 +460,18 @@ export class GenerateService {
       results.push({ time, url: outUrl, details: { operation: operation?.name ?? null } });
       if (outPath) clipPaths.push(outPath);
 
-      // Chain last frame to next iteration if possible
-      if (outPath) {
-        try {
-          // Delay to ensure the file is fully flushed and stable before extraction
-          const delayMs = Number(process.env.VIDEO_POST_DOWNLOAD_DELAY_MS ?? 20000);
-          this.logger.debug(`[ffmpeg] waiting ${delayMs}ms before last-frame extraction for ${time}`);
-          await new Promise((r) => setTimeout(r, delayMs));
-          const lastFrame = await extractLastFrameBase64(outPath);
-          const img = toImageBytes(lastFrame);
-          if (img) firstFrameObj = img; // use as the next clip's starting image
-          this.logger.log(`Extracted last frame for next clip: ${firstFrameObj ? 'yes' : 'no'}`);
-          // Save as image for diagnostics (optional)
-          if (firstFrameObj && firstFrameObj.imageBytes) {
-            const imgPath = path.resolve(vidsDir, `first_frame_${time}.png`);
-            try {
-              fs.writeFileSync(imgPath, Buffer.from(firstFrameObj.imageBytes, 'base64'));
-              this.logger.debug(`Saved extracted first frame image: ${imgPath}`);
-            } catch (e) {
-              this.logger.debug(`Failed to save extracted first frame image: ${e?.message ?? e}`);
-            }
-          }
-        } catch {}
-      }
+      // Chain last frame to next iteration is disabled per request.
+      // if (outPath) {
+      //   try {
+      //     const delayMs = Number(process.env.VIDEO_POST_DOWNLOAD_DELAY_MS ?? 20000);
+      //     this.logger.debug(`[ffmpeg] waiting ${delayMs}ms before last-frame extraction for ${time}`);
+      //     await new Promise((r) => setTimeout(r, delayMs));
+      //     const lastFrame = await extractLastFrameBase64(outPath);
+      //     const img = toImageBytes(lastFrame);
+      //     if (img) firstFrameObj = img; // use as the next clip's starting image
+      //     this.logger.log(`Extracted last frame for next clip: ${firstFrameObj ? 'yes' : 'no'}`);
+      //   } catch {}
+      // }
     }
 
     // After all clips, attempt concatenation if 2+ clips exist
