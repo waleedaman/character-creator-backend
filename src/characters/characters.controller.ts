@@ -33,10 +33,9 @@ export class CharactersController {
     // If a multipart file was uploaded and saved to disk, store the URL path instead of inline data
     if (file && file.path) {
       // Build a relative URL for the frontend to fetch.
-      const uploadDir = process.env.UPLOAD_DIR ?? 'uploads/characters';
       const publicPrefix = process.env.UPLOAD_PUBLIC_PREFIX ?? '/uploads';
       const filename = path.basename(file.path);
-      dto.image = `${publicPrefix}/${filename}`;
+      dto.image = `${publicPrefix}/characters/${filename}`;
     } else if (file && file.buffer) {
       // Fallback: if diskStorage didn't provide path but buffer exists, convert to data URL
       const mime = file.mimetype || 'image/png';
